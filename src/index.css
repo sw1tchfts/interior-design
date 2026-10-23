@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --color-ink: #23211e;
+  --color-muted: #77736b;
+  --color-line: #e2ded6;
+  --color-panel: #faf9f6;
+  --color-canvas: #f1efea;
+  --color-accent: #2f6fde;
+  --color-accent-soft: #e4ecfb;
+  --color-danger: #d1453b;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer components {
+  .field-label {
+    @apply text-[11px] font-medium uppercase tracking-wide text-muted;
+  }
+
+  .input {
+    @apply w-full rounded-md border border-line bg-white px-2 py-1 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-soft;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md border border-line bg-white px-2.5 py-1.5 text-sm font-medium text-ink shadow-xs hover:bg-panel disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .btn-primary {
+    @apply border-accent bg-accent text-white hover:bg-accent/90;
+  }
+
+  .btn-ghost {
+    @apply border-transparent bg-transparent shadow-none hover:bg-black/5;
+  }
+
+  .btn-danger {
+    @apply text-danger hover:bg-danger/5;
+  }
+
+  .seg {
+    @apply inline-flex rounded-md border border-line bg-white p-0.5;
+  }
+
+  .seg > button {
+    @apply rounded px-2 py-1 text-xs font-medium text-muted hover:text-ink;
+  }
+
+  .seg > button[aria-pressed="true"] {
+    @apply bg-ink text-white;
+  }
+}
