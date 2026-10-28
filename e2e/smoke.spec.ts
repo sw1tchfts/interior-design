@@ -3,9 +3,19 @@ import { expect, type Page, test } from '@playwright/test';
 const INCH = 0.0254;
 const FOOT = 12 * INCH;
 
+interface DebugOpening {
+  id: string;
+  type: string;
+  wallId: string;
+  offset: number;
+  width: number;
+  sill: number;
+  swing: string;
+}
+
 interface DebugDoc {
   roomOrder: string[];
-  rooms: Record<string, { vertices: { p: [number, number] }[] }>;
+  rooms: Record<string, { vertices: { p: [number, number] }[]; openings: DebugOpening[] }>;
   layoutOrder: string[];
   layouts: Record<string, { itemOrder: string[]; items: Record<string, { transform: { x: number; z: number; rotationY: number } }> }>;
 }
@@ -22,6 +32,11 @@ async function firstItem(page: Page) {
 async function roomPoints(page: Page) {
   const doc = await getDoc(page);
   return doc.rooms[doc.roomOrder[0]!]!.vertices.map((v) => v.p);
+}
+
+async function openings(page: Page) {
+  const doc = await getDoc(page);
+  return doc.rooms[doc.roomOrder[0]!]!.openings;
 }
 
 test('create a room, add furniture, drag, undo, edit walls and persist', async ({ page }) => {
@@ -75,6 +90,59 @@ test('create a room, add furniture, drag, undo, edit walls and persist', async (
   const reloaded = await firstItem(page);
   expect(reloaded.x).toBeCloseTo(saved.x, 9);
   expect(reloaded.rotationY).toBeCloseTo(saved.rotationY, 9);
+
+  expect(errors).toEqual([]);
+});
+
+test('add doors and windows, slide and edit them, and persist', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Create project' }).click();
+  await expect(page.getByTestId('plan-svg')).toBeVisible();
+
+  // A new door lands on a wall and opens in the properties panel.
+  await page.getByTestId('add-door-30').click();
+  await expect(page.getByLabel('Opening width')).toBeVisible();
+  const [door] = await openings(page);
+  expect(door!.type).toBe('door');
+  expect(door!.width).toBeCloseTo(30 * INCH, 9);
+
+  // Slide it along its (horizontal) wall: the offset snaps to the 1" grid and is one undo step.
+  const box = (await page.locator(`[data-opening-id="${door!.id}"]`).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  for (let i = 1; i <= 10; i++) await page.mouse.move(box.x + box.width / 2 + i * 6, box.y + box.height / 2);
+  await page.mouse.up();
+  const moved = (await openings(page))[0]!;
+  expect(moved.wallId).toBe(door!.wallId);
+  expect(moved.offset).toBeGreaterThan(door!.offset);
+  expect(Math.abs(moved.offset / INCH - Math.round(moved.offset / INCH))).toBeLessThan(1e-6);
+  await page.getByRole('button', { name: 'Undo' }).click();
+  expect((await openings(page))[0]!.offset).toBeCloseTo(door!.offset, 9);
+
+  // Edit it in the properties panel.
+  const width = page.getByLabel('Opening width');
+  await width.fill('36');
+  await width.press('Enter');
+  expect((await openings(page))[0]!.width).toBeCloseTo(36 * INCH, 9);
+  await page.getByRole('button', { name: 'Outward' }).click();
+  expect((await openings(page))[0]!.swing).toBe('out');
+
+  // A window sits above the floor; the 3D view keeps rendering with both cut out.
+  await page.getByTestId('add-window-36').click();
+  const all = await openings(page);
+  expect(all).toHaveLength(2);
+  expect(all[1]!.sill).toBeGreaterThan(0);
+  await expect(page.getByTestId('scene-3d').locator('canvas')).toBeVisible();
+
+  await expect(page.getByTestId('save-status')).toHaveText('Saved', { timeout: 5000 });
+  await page.reload();
+  await expect(page.getByTestId('plan-svg')).toBeVisible();
+  const reloaded = await openings(page);
+  expect(reloaded.map((o) => o.type)).toEqual(['door', 'window']);
+  expect(reloaded[0]!.swing).toBe('out');
 
   expect(errors).toEqual([]);
 });

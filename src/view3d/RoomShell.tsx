@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { CanvasTexture, type Mesh, RepeatWrapping, Shape, ShapeGeometry, SRGBColorSpace, Vector2 } from 'three';
+import { CanvasTexture, type Object3D, RepeatWrapping, Shape, ShapeGeometry, SRGBColorSpace, Vector2 } from 'three';
 import type { Room } from '../domain/schema/project';
+import { openingSpan, wallFrame } from '../domain/room/openings';
 import { roomPoints } from '../domain/room/roomOps';
 import { FOOT, type UnitSystem } from '../domain/units/units';
+import { type OpeningBox, openingBoxes, wallHoles } from './openingGeometry';
 import { buildWallMeshes } from './wallGeometry';
 
 const STUB_HEIGHT = 0.12;
@@ -23,6 +25,23 @@ function gridTexture(color: string): CanvasTexture {
   tex.colorSpace = SRGBColorSpace;
   tex.anisotropy = 8;
   return tex;
+}
+
+function OpeningDressing({ rotationY, boxes }: { rotationY: number; boxes: OpeningBox[] }) {
+  return (
+    <>
+      {boxes.map((b, k) => (
+        <mesh key={k} position={b.pos} rotation-y={rotationY} castShadow={b.material !== 'glass'} receiveShadow>
+          <boxGeometry args={b.size} />
+          {b.material === 'glass' ? (
+            <meshStandardMaterial color="#cfe3ef" transparent opacity={0.3} roughness={0.05} depthWrite={false} />
+          ) : (
+            <meshStandardMaterial color={b.material === 'leaf' ? '#e6dfd3' : '#fbfaf6'} roughness={0.65} />
+          )}
+        </mesh>
+      ))}
+    </>
+  );
 }
 
 export function RoomShell({ room, unitSystem }: { room: Room; unitSystem: UnitSystem }) {
@@ -45,14 +64,25 @@ export function RoomShell({ room, unitSystem }: { room: Room; unitSystem: UnitSy
   }, [room.materials.floor, unitSystem]);
   useEffect(() => () => texture.dispose(), [texture]);
 
-  const walls = useMemo(() => buildWallMeshes(pts, thickness, height), [pts, thickness, height]);
-  const stubs = useMemo(() => buildWallMeshes(pts, thickness, STUB_HEIGHT), [pts, thickness]);
+  const holes = useMemo(() => wallHoles(room), [room]);
+  const walls = useMemo(() => buildWallMeshes(pts, thickness, height, holes), [pts, thickness, height, holes]);
+  const stubs = useMemo(() => buildWallMeshes(pts, thickness, STUB_HEIGHT, holes), [pts, thickness, holes]);
   useEffect(() => () => [...walls, ...stubs].forEach((w) => w.geometry.dispose()), [walls, stubs]);
 
-  const fullRefs = useRef<(Mesh | null)[]>([]);
-  const stubRefs = useRef<(Mesh | null)[]>([]);
+  const dressing = useMemo(
+    () =>
+      room.openings.flatMap((o) => {
+        const span = openingSpan(room, o);
+        if (!span) return [];
+        return [{ id: o.id, wallIndex: span.wallIndex, ...openingBoxes(o, span, wallFrame(room, span.wallIndex), thickness, height) }];
+      }),
+    [room, thickness, height],
+  );
 
-  // Dollhouse cutaway: hide walls standing between the camera and the room.
+  const fullRefs = useRef<(Object3D | null)[]>([]);
+  const stubRefs = useRef<(Object3D | null)[]>([]);
+
+  // Dollhouse cutaway: hide walls (and their doors and windows) standing between the camera and the room.
   useFrame(({ camera }) => {
     walls.forEach((w, i) => {
       const toCam = camera.position.clone().sub(w.mid);
@@ -71,9 +101,14 @@ export function RoomShell({ room, unitSystem }: { room: Room; unitSystem: UnitSy
         <meshStandardMaterial map={texture} roughness={0.9} />
       </mesh>
       {walls.map((w, i) => (
-        <mesh key={`w${i}`} ref={(m) => { fullRefs.current[i] = m; }} geometry={w.geometry} castShadow receiveShadow>
-          <meshStandardMaterial color={room.materials.walls} roughness={0.95} />
-        </mesh>
+        <group key={`w${i}`} ref={(g) => { fullRefs.current[i] = g; }}>
+          <mesh geometry={w.geometry} castShadow receiveShadow>
+            <meshStandardMaterial color={room.materials.walls} roughness={0.95} />
+          </mesh>
+          {dressing.filter((d) => d.wallIndex === i).map((d) => (
+            <OpeningDressing key={d.id} rotationY={d.rotationY} boxes={d.boxes} />
+          ))}
+        </group>
       ))}
       {stubs.map((w, i) => (
         <mesh key={`s${i}`} ref={(m) => { stubRefs.current[i] = m; }} geometry={w.geometry} visible={false} receiveShadow>

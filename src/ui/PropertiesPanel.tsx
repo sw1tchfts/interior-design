@@ -1,17 +1,21 @@
 import { useState } from 'react';
-import { Copy, Lock, RotateCcw, RotateCw, Trash2, Unlock } from 'lucide-react';
+import { Copy, Lock, Plus, RotateCcw, RotateCw, Trash2, Unlock } from 'lucide-react';
 import { getKind, itemColor, itemParts } from '../domain/furniture/registry';
 import { PALETTE, type MaterialSlot, type ParamField } from '../domain/furniture/types';
 import { area, perimeter } from '../domain/geometry/polygon';
 import { dist, radToDeg, degToRad, wrapAngle } from '../domain/geometry/vec2';
-import { type Item, type Settings, newId } from '../domain/schema/project';
+import { type Item, type Opening, type OpeningType, OPENING_TYPES, type Settings, newId } from '../domain/schema/project';
 import {
-  deleteVertex, insertVertex, roomPoints, setWallLength, validateRoomPoints, wallLabel,
+  OPENING_DEFS, OPENING_PRESETS, changeOpeningType, openingSpan, removeOpening, setOpeningSpan, updateOpening,
+} from '../domain/room/openings';
+import {
+  deleteVertex, insertVertex, roomPoints, setWallLength, validateRoomPoints, wallLabel, wallLength,
 } from '../domain/room/roomOps';
 import { findCollisions } from '../domain/snapping/snapping';
-import { formatArea } from '../domain/units/units';
+import { formatArea, formatLength } from '../domain/units/units';
 import { addItem, docActions, removeItem, updateItem, updateRoom, useItem, useLayout, useRoom, useSettings } from '../state/documentStore';
 import { ui, useUiStore } from '../state/uiStore';
+import { addOpeningFromPreset } from './LibraryPanel';
 import { LengthInput } from './LengthInput';
 
 const SLOT_LABELS: Record<MaterialSlot, string> = {
@@ -55,6 +59,8 @@ export function PropertiesPanel() {
         <WallProperties index={selection.index} settings={settings} />
       ) : selection?.type === 'vertex' ? (
         <VertexProperties index={selection.index} />
+      ) : selection?.type === 'opening' ? (
+        <OpeningProperties key={selection.id} id={selection.id} settings={settings} />
       ) : (
         <RoomProperties settings={settings} />
       )}
@@ -77,6 +83,16 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="text-muted">{label}</span>
       {children}
     </label>
+  );
+}
+
+/** Like Field, but not a <label>, so clicking the caption doesn't press the first button. */
+function ChoiceField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[96px_minmax(0,1fr)] items-center gap-2 py-0.5 text-sm">
+      <span className="text-muted">{label}</span>
+      <div>{children}</div>
+    </div>
   );
 }
 
@@ -271,6 +287,12 @@ function WallProperties({ index, settings }: { index: number; settings: Settings
   if (!room || !room.vertices[index]) return null;
   const pts = roomPoints(room);
   const len = dist(pts[index]!, pts[(index + 1) % pts.length]!);
+  const openings = room.openings
+    .flatMap((o) => {
+      const s = openingSpan(room, o);
+      return s && s.wallIndex === index ? [{ o, start: s.start }] : [];
+    })
+    .sort((p, q) => p.start - q.start);
   return (
     <div>
       <h2 className="mb-3 text-base font-semibold">Wall {wallLabel(index)}</h2>
@@ -297,8 +319,118 @@ function WallProperties({ index, settings }: { index: number; settings: Settings
         Changing the length keeps every corner angle; the next wall slides to follow. Drag the wall in the plan to move it,
         drag a corner handle to reshape, or double-click a wall to add a corner. Thickness applies to all walls for now.
       </p>
-      <button className="btn" onClick={() => { updateRoom((r) => insertVertex(r, index)); ui().select({ type: 'vertex', index: index + 1 }); }}>
+      <button className="btn mb-4" onClick={() => { updateRoom((r) => insertVertex(r, index)); ui().select({ type: 'vertex', index: index + 1 }); }}>
         Add corner in the middle
+      </button>
+      <Section title="Doors & windows">
+        {openings.length > 0 && (
+          <ul className="mb-2 space-y-0.5">
+            {openings.map(({ o, start }) => (
+              <li key={o.id}>
+                <button
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm hover:bg-accent-soft"
+                  onClick={() => ui().select({ type: 'opening', id: o.id })}
+                >
+                  <span className="min-w-0 flex-1 truncate">{OPENING_DEFS[o.type].label}</span>
+                  <span className="shrink-0 font-mono text-[11px] text-muted">
+                    {formatLength(o.width, settings)} · {formatLength(start, settings)} from left
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex gap-2">
+          <button className="btn" onClick={() => addOpeningFromPreset(DOOR_PRESET, [index])}><Plus size={14} /> Door</button>
+          <button className="btn" onClick={() => addOpeningFromPreset(WINDOW_PRESET, [index])}><Plus size={14} /> Window</button>
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+const DOOR_PRESET = OPENING_PRESETS.find((p) => p.id === 'door-30')!;
+const WINDOW_PRESET = OPENING_PRESETS.find((p) => p.id === 'window-36')!;
+const SIDE_HINT = 'Left and right as seen from inside the room, facing the wall.';
+
+function OpeningProperties({ id, settings }: { id: string; settings: Settings }) {
+  const room = useRoom();
+  const o = room?.openings.find((x) => x.id === id);
+  const span = room && o ? openingSpan(room, o) : null;
+  if (!room || !o || !span) return null;
+  const def = OPENING_DEFS[o.type];
+  const len = wallLength(room, span.wallIndex);
+  const width = span.end - span.start;
+  const set = (patch: Partial<Opening>) => updateRoom((r) => updateOpening(r, id, patch));
+  const place = (offset: number, w: number) => {
+    const next = setOpeningSpan(room, id, offset, w);
+    if (next) updateRoom(() => next);
+    else ui().showToast('That would overlap another door or window.');
+  };
+
+  return (
+    <div>
+      <h2 className="text-base font-semibold">{def.label}</h2>
+      <div className="mb-3 text-xs text-muted">On wall {wallLabel(span.wallIndex)}</div>
+
+      <Section title="Type">
+        <select
+          className="input"
+          aria-label="Opening type"
+          value={o.type}
+          onChange={(e) => set(changeOpeningType(o, e.target.value as OpeningType))}
+        >
+          {OPENING_TYPES.map((t) => <option key={t} value={t}>{OPENING_DEFS[t].label}</option>)}
+        </select>
+      </Section>
+
+      <Section title="Size">
+        <Field label="Width">
+          <LengthInput label="Opening width" value={width} settings={settings} min={0.1} max={len} onCommit={(v) => place(span.start, v)} />
+        </Field>
+        <Field label="Height">
+          <LengthInput label="Opening height" value={o.height} settings={settings} min={0.1} max={room.ceilingHeight - o.sill} onCommit={(v) => set({ height: v })} />
+        </Field>
+        {o.type === 'window' && (
+          <Field label="Sill height">
+            <LengthInput label="Sill height" value={o.sill} settings={settings} min={0} max={room.ceilingHeight - 0.1} onCommit={(v) => set({ sill: v, height: Math.min(o.height, room.ceilingHeight - v) })} />
+          </Field>
+        )}
+      </Section>
+
+      <Section title="Position">
+        <Field label="From left">
+          <LengthInput label="Distance from left corner" value={span.start} settings={settings} min={0} max={len - width} onCommit={(v) => place(v, width)} />
+        </Field>
+        <Field label="From right">
+          <LengthInput label="Distance from right corner" value={len - span.end} settings={settings} min={0} max={len - width} onCommit={(v) => place(len - width - v, width)} />
+        </Field>
+        <p className="mt-1 text-xs text-muted">{SIDE_HINT} Drag it in the plan to slide it or move it to another wall.</p>
+      </Section>
+
+      {(def.handed || def.swings) && (
+        <Section title={o.type === 'pocket_door' ? 'Pocket' : 'Swing'}>
+          {def.handed && (
+            <ChoiceField label={o.type === 'pocket_door' ? 'Slides into' : 'Hinges'}>
+              <div className="seg" role="group" aria-label={o.type === 'pocket_door' ? 'Pocket side' : 'Hinge side'}>
+                <button aria-pressed={o.hinge === 'start'} onClick={() => set({ hinge: 'start' })}>Left</button>
+                <button aria-pressed={o.hinge === 'end'} onClick={() => set({ hinge: 'end' })}>Right</button>
+              </div>
+            </ChoiceField>
+          )}
+          {def.swings && (
+            <ChoiceField label="Opens">
+              <div className="seg" role="group" aria-label="Swing direction">
+                <button aria-pressed={o.swing === 'in'} onClick={() => set({ swing: 'in' })}>Into room</button>
+                <button aria-pressed={o.swing === 'out'} onClick={() => set({ swing: 'out' })}>Outward</button>
+              </div>
+            </ChoiceField>
+          )}
+        </Section>
+      )}
+
+      <button className="btn btn-danger" onClick={() => { updateRoom((r) => removeOpening(r, id)); ui().select(null); }}>
+        <Trash2 size={14} /> Delete
       </button>
     </div>
   );

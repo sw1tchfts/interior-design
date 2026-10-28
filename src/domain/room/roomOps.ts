@@ -36,13 +36,22 @@ export function validateRoomPoints(pts: Vec2[]): Validation {
   return { ok: true };
 }
 
-/** Ensures counter-clockwise winding, keeping each wall attached to the same edge. */
+/**
+ * Ensures counter-clockwise winding, keeping each wall attached to the same edge.
+ * Walls then run the other way, so openings are mirrored to stay in place.
+ */
 export function normalizeWinding(room: Room): Room {
   if (signedArea(roomPoints(room)) >= 0) return room;
   const n = room.vertices.length;
   const vertices = [...room.vertices].reverse();
   const walls = vertices.map((_, k) => room.walls[(((n - 2 - k) % n) + n) % n]!);
-  return { ...room, vertices, walls };
+  const lengths = new Map(room.walls.map((w, i) => [w.id, wallLength(room, i)]));
+  const openings = room.openings.map((o) => {
+    const len = lengths.get(o.wallId);
+    if (len === undefined) return o;
+    return { ...o, offset: Math.max(0, len - o.offset - o.width), hinge: o.hinge === 'start' ? ('end' as const) : ('start' as const) };
+  });
+  return { ...room, vertices, walls, openings };
 }
 
 /** Replaces the room outline. Keeps ids when the corner count is unchanged. */
@@ -120,25 +129,37 @@ export function moveWall(room: Room, wallIndex: number, delta: number): Room {
   return moveVertex(moveVertex(room, iA, A2), iB, B2);
 }
 
-/** Splits wall i at parameter t, inserting a new corner. */
+/** Splits wall i at parameter t, inserting a new corner. Openings past the split move to the new wall. */
 export function insertVertex(room: Room, wallIndex: number, t = 0.5): Room {
   const [a, b] = wallEndpoints(room, wallIndex);
   const p = lerp(a, b, t);
+  const split = dist(a, p);
+  const old = room.walls[wallIndex]!;
+  const added = { ...old, id: newId() };
   const vertices = [...room.vertices];
   vertices.splice(wallIndex + 1, 0, { id: newId(), p });
   const walls = [...room.walls];
-  walls.splice(wallIndex + 1, 0, { ...room.walls[wallIndex]!, id: newId() });
-  return { ...room, vertices, walls };
+  walls.splice(wallIndex + 1, 0, added);
+  const openings = room.openings.map((o) =>
+    o.wallId === old.id && o.offset + o.width / 2 > split ? { ...o, wallId: added.id, offset: o.offset - split } : o,
+  );
+  return { ...room, vertices, walls, openings };
 }
 
 /** Removes a corner, merging its two walls. Rooms keep at least 3 corners. */
 export function deleteVertex(room: Room, index: number): Room {
   const n = room.vertices.length;
   if (n <= 3) return room;
+  const prev = (index - 1 + n) % n;
+  const removed = room.walls[index]!;
+  const prevLength = wallLength(room, prev);
   const vertices = room.vertices.filter((_, i) => i !== index);
   const walls = room.walls.filter((_, i) => i !== index);
-  // Wall (index - 1) now runs to the vertex after the removed one.
-  return { ...room, vertices, walls };
+  // Wall (index - 1) now runs to the vertex after the removed one and takes over its openings.
+  const openings = room.openings.map((o) =>
+    o.wallId === removed.id ? { ...o, wallId: room.walls[prev]!.id, offset: o.offset + prevLength } : o,
+  );
+  return { ...room, vertices, walls, openings };
 }
 
 export const wallLabel = (index: number) =>

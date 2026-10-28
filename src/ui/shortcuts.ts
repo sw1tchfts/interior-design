@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import { activeLayout, docActions, getDoc, removeItem, updateItem } from '../state/documentStore';
+import { removeOpening } from '../domain/room/openings';
+import { activeLayout, docActions, getDoc, removeItem, updateItem, updateRoom } from '../state/documentStore';
 import { ui } from '../state/uiStore';
 import { duplicateItem, rotateItem } from './PropertiesPanel';
 
@@ -28,6 +29,12 @@ export function useShortcuts() {
       if (key === 'escape') return ui().select(null);
 
       const doc = getDoc();
+      if (doc && selection?.type === 'opening' && (key === 'delete' || key === 'backspace')) {
+        e.preventDefault();
+        updateRoom((r) => removeOpening(r, selection.id));
+        ui().select(null);
+        return;
+      }
       if (!doc || selection?.type !== 'item') return;
       const item = activeLayout(doc).items[selection.id];
       if (!item) return;

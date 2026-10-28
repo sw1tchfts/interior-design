@@ -4,8 +4,9 @@ import { Maximize } from 'lucide-react';
 import { boundingBox, offsetPolygon, outwardNormal } from '../domain/geometry/polygon';
 import { type Vec2, add, closestPointOnSegment, dist, dot, localToWorld, lerp, scale, sub, wrapAngle } from '../domain/geometry/vec2';
 import { getKind, itemFootprint } from '../domain/furniture/registry';
-import type { Item, Room, Settings } from '../domain/schema/project';
+import type { Item, Opening, Room, Settings } from '../domain/schema/project';
 import { placeTypedLength, snapDrawPoint } from '../domain/room/drawSnap';
+import { dragOpeningTo, openingSpan, updateOpening, wallFrame } from '../domain/room/openings';
 import {
   insertVertex, moveVertex, moveWall, roomPoints, setRoomPoints, setWallLength, validateRoomPoints, wallLabel,
 } from '../domain/room/roomOps';
@@ -15,6 +16,7 @@ import { docActions, getDoc, activeLayout, activeRoom, updateItem, updateRoom, u
 import { ui, useUiStore } from '../state/uiStore';
 import { GridLayer } from './GridLayer';
 import { ItemSymbol } from './ItemSymbol';
+import { OpeningDimensions, OpeningHitArea, OpeningSymbol } from './OpeningSymbol';
 import { LengthInput } from '../ui/LengthInput';
 
 interface Viewport {
@@ -28,7 +30,9 @@ type Drag =
   | { type: 'item'; id: string; offset: Vec2 }
   | { type: 'rotate'; id: string }
   | { type: 'vertex'; index: number }
-  | { type: 'wall'; index: number; startWorld: Vec2; startRoom: Room };
+  | { type: 'wall'; index: number; startWorld: Vec2; startRoom: Room }
+  /** `grab` is how far along the wall the pointer was from the opening's start edge. */
+  | { type: 'opening'; id: string; grab: number };
 
 const ACCENT = '#2f6fde';
 const DANGER = '#d1453b';
@@ -155,6 +159,8 @@ export function PlanCanvas() {
   const toScreen = (p: Vec2): Vec2 => [(p[0] - view.cx) * view.s + size.w / 2, (p[1] - view.cz) * view.s + size.h / 2];
   const editingRoom = selection?.type === 'wall' || selection?.type === 'vertex';
   const selectedItem = selection?.type === 'item' ? layout.items[selection.id] : undefined;
+  const selectedOpening = selection?.type === 'opening' ? room.openings.find((o) => o.id === selection.id) : undefined;
+  const wallT = Math.max(...thickness);
 
   const capture = (e: ReactPointerEvent) => svgRef.current?.setPointerCapture(e.pointerId);
 
@@ -165,6 +171,19 @@ export function PlanCanvas() {
     if (item.locked) return;
     const w = toWorld(e.clientX, e.clientY);
     drag.current = { type: 'item', id: item.id, offset: sub(w, [item.transform.x, item.transform.z]) };
+    docActions().begin();
+    capture(e);
+  };
+
+  const onOpeningDown = (e: ReactPointerEvent, o: Opening) => {
+    if (tool !== 'select' || e.button !== 0) return;
+    e.stopPropagation();
+    ui().select({ type: 'opening', id: o.id });
+    const span = openingSpan(room, o);
+    if (!span) return;
+    const f = wallFrame(room, span.wallIndex);
+    const along = dot(sub(toWorld(e.clientX, e.clientY), f.a), f.dir);
+    drag.current = { type: 'opening', id: o.id, grab: along - span.start };
     docActions().begin();
     capture(e);
   };
@@ -222,6 +241,11 @@ export function PlanCanvas() {
       if (!e.altKey) delta = snapToGrid(delta, settings.snapStep);
       const next = moveWall(d.startRoom, d.index, delta);
       if (validateRoomPoints(roomPoints(next)).ok) updateRoom(() => next);
+    } else if (d.type === 'opening') {
+      const r = activeRoom(doc);
+      const o = r.openings.find((x) => x.id === d.id);
+      const next = o && dragOpeningTo(r, o, w, d.grab, e.altKey ? 0 : settings.snapStep);
+      if (next) updateRoom((rm) => updateOpening(rm, d.id, next));
     }
   };
 
@@ -274,6 +298,9 @@ export function PlanCanvas() {
           {/* Room */}
           <polygon points={pts.map((p) => p.join(',')).join(' ')} fill="#fbfaf7" />
           <path d={wallPath} fill="#3d3a35" fillRule="evenodd" pointerEvents="none" />
+          {room.openings.map((o) => (
+            <OpeningSymbol key={o.id} room={room} opening={o} thickness={wallT} px={px} selected={o.id === selectedOpening?.id} />
+          ))}
 
           {/* Furniture, rugs first */}
           <g>
@@ -336,6 +363,15 @@ export function PlanCanvas() {
                 />
               );
             })}
+
+          {/* Doors and windows: grab areas above the walls, and gaps to the corners when selected */}
+          {tool === 'select' &&
+            room.openings.map((o) => (
+              <OpeningHitArea key={o.id} room={room} opening={o} thickness={wallT} px={px} onPointerDown={onOpeningDown} />
+            ))}
+          {selectedOpening && tool === 'select' && (
+            <OpeningDimensions room={room} opening={selectedOpening} px={px} settings={settings} />
+          )}
 
           {/* Wall dimension labels */}
           {pts.map((a, i) => {

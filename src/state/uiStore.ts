@@ -4,6 +4,7 @@ export type Selection =
   | { type: 'item'; id: string }
   | { type: 'wall'; index: number }
   | { type: 'vertex'; index: number }
+  | { type: 'opening'; id: string }
   | null;
 
 export type Tool = 'select' | 'draw';

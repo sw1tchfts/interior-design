@@ -9,8 +9,10 @@ import type { Vec2 } from '../geometry/vec2';
 //   orientation (positive signed area). Wall i runs from vertex i to vertex i+1,
 //   and `walls` is parallel to `vertices`.
 // - Furniture origin is the footprint center on the floor; the front faces local +z.
+// - Openings hang on a wall by id. `offset` runs along the wall from its start
+//   vertex to the opening's near edge; seen from inside the room, that is the left end.
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 const vec2 = z.tuple([z.number(), z.number()]);
 
@@ -29,14 +31,21 @@ export const WallSchema = z.object({
   heightOverride: z.number().positive().optional(),
 });
 
+export const OPENING_TYPES = ['door', 'double_door', 'sliding_door', 'pocket_door', 'opening', 'window'] as const;
+
 export const OpeningSchema = z.object({
   id: z.string(),
   wallId: z.string(),
-  type: z.enum(['door', 'window', 'cased', 'slider']),
+  type: z.enum(OPENING_TYPES),
   offset: z.number(),
   width: z.number().positive(),
   height: z.number().positive(),
+  /** Height of the bottom of the opening above the floor (0 for doors). */
   sill: z.number().min(0),
+  /** The jamb with the hinges (or the pocket): the wall's start or end side. */
+  hinge: z.enum(['start', 'end']),
+  /** Whether a hinged door swings into the room or out of it. */
+  swing: z.enum(['in', 'out']),
 });
 
 export const RoomSchema = z.object({
@@ -91,6 +100,7 @@ export const ProjectDocSchema = z.object({
 export type Settings = z.infer<typeof SettingsSchema>;
 export type Wall = z.infer<typeof WallSchema>;
 export type Opening = z.infer<typeof OpeningSchema>;
+export type OpeningType = Opening['type'];
 export type Room = z.infer<typeof RoomSchema>;
 export type Item = z.infer<typeof ItemSchema>;
 export type Layout = z.infer<typeof LayoutSchema>;
@@ -142,12 +152,42 @@ export function createProject(name: string, roomPoints: Vec2[]): ProjectDoc {
   };
 }
 
-/** Validates (and in future, migrates) a document loaded from storage or a file. */
+type RawDoc = { schemaVersion?: unknown; rooms?: Record<string, { openings?: unknown }> };
+
+/** Upgrades a document from the keyed schema version to the next one. */
+const MIGRATIONS: Record<number, (doc: RawDoc) => RawDoc> = {
+  // v2: openings gained `hinge` and `swing`; 'cased' and 'slider' were renamed.
+  1: (doc) => ({
+    ...doc,
+    schemaVersion: 2,
+    rooms: Object.fromEntries(
+      Object.entries(doc.rooms ?? {}).map(([id, room]) => [
+        id,
+        Array.isArray(room?.openings)
+          ? {
+              ...room,
+              openings: room.openings.map((o: { type?: unknown }) => ({
+                hinge: 'start',
+                swing: 'in',
+                ...o,
+                type: o.type === 'cased' ? 'opening' : o.type === 'slider' ? 'sliding_door' : o.type,
+              })),
+            }
+          : room,
+      ]),
+    ),
+  }),
+};
+
+/** Validates a document loaded from storage or a file, migrating older versions. */
 export function parseProjectDoc(raw: unknown): ProjectDoc {
-  const version = (raw as { schemaVersion?: unknown } | null)?.schemaVersion;
+  let doc = raw as RawDoc | null;
+  const version = doc?.schemaVersion;
   if (typeof version === 'number' && version > CURRENT_SCHEMA_VERSION) {
     throw new Error(`This project was saved by a newer version of the app (schema ${version}).`);
   }
-  // Migrations from older versions go here as the schema evolves.
-  return ProjectDocSchema.parse(raw);
+  while (doc && typeof doc.schemaVersion === 'number' && MIGRATIONS[doc.schemaVersion]) {
+    doc = MIGRATIONS[doc.schemaVersion]!(doc);
+  }
+  return ProjectDocSchema.parse(doc);
 }
