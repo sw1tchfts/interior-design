@@ -147,6 +147,28 @@ test('add doors and windows, slide and edit them, and persist', async ({ page })
   expect(errors).toEqual([]);
 });
 
+test('import a RoomPlan scan and pick a room', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+
+  await page.goto('/');
+  await page.getByTestId('scan-file-input').setInputFiles('src/domain/scan/fixtures/openplan3d-apartment.json');
+  const picker = page.getByTestId('scan-rooms');
+  await expect(picker).toContainText('This scan has 3 rooms');
+  await picker.getByRole('button', { name: /Bedroom 1/ }).click();
+
+  await expect(page.getByTestId('plan-svg')).toBeVisible();
+  await expect(page.getByLabel('Project name')).toHaveValue('openplan3d-apartment – Bedroom 1');
+  const doc = await getDoc(page);
+  const room = doc.rooms[doc.roomOrder[0]!]!;
+  expect(room.vertices).toHaveLength(4);
+  expect(room.openings.map((o) => o.type).sort()).toEqual(['door', 'window', 'window']);
+  const layout = doc.layouts[doc.layoutOrder[0]!]!;
+  expect(layout.itemOrder).toHaveLength(6);
+  await expect(page.locator('[data-item-id]')).toHaveCount(6);
+  expect(errors).toEqual([]);
+});
+
 test('draw a room outline by typing wall lengths', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Create project' }).click();

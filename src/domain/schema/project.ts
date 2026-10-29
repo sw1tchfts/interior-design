@@ -12,7 +12,7 @@ import type { Vec2 } from '../geometry/vec2';
 // - Openings hang on a wall by id. `offset` runs along the wall from its start
 //   vertex to the opening's near edge; seen from inside the room, that is the left end.
 
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 const vec2 = z.tuple([z.number(), z.number()]);
 
@@ -67,7 +67,16 @@ export const ItemSchema = z.object({
   transform: z.object({ x: z.number(), z: z.number(), y: z.number(), rotationY: z.number() }),
   colors: z.record(z.string(), z.string()),
   originItemId: z.string().optional(),
-  source: z.object({ type: z.literal('manual') }),
+  source: z.discriminatedUnion('type', [
+    z.object({ type: z.literal('manual') }),
+    /** Imported from a RoomPlan scan: the object's id, category and attributes there. */
+    z.object({
+      type: z.literal('scan'),
+      objectId: z.string(),
+      category: z.string(),
+      attributes: z.record(z.string(), z.string()).optional(),
+    }),
+  ]),
   locked: z.boolean().optional(),
   hidden: z.boolean().optional(),
   notes: z.string().optional(),
@@ -177,6 +186,8 @@ const MIGRATIONS: Record<number, (doc: RawDoc) => RawDoc> = {
       ]),
     ),
   }),
+  // v3: items can come from a scan (`source.type: 'scan'`); nothing to convert.
+  2: (doc) => ({ ...doc, schemaVersion: 3 }),
 };
 
 /** Validates a document loaded from storage or a file, migrating older versions. */

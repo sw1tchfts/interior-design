@@ -28,13 +28,16 @@ RoomPlan does not detect rugs, lamps, art, plants, curtains or most decor. Those
 
 ## 4. Scanning with an existing app
 
-| App | Cost | Exports | Notes |
+| App | Cost (checked Oct 2026) | Exports | Notes |
 |---|---|---|---|
-| **3D Scanner App** (Laan Labs) | Free | GLB, glTF, OBJ, DAE, STL, USDZ, point clouds, DXF | Has a RoomPlan mode. GLB is the easiest format for us if it keeps pieces separate and named. |
-| **Room(Scan)** | Free | USDZ | Listing says the file carries each recognized component's dimensions and furniture type. |
-| **Polycam** | Free: glTF only; paid: more | glTF/GLB, OBJ, USDZ, floor plans | Docs don't mention separate furniture objects. Try last. |
+| **OpenPlan3D** (Laan Labs) | Free, no paywall | Editable Plan JSON, USDZ, PNG, SVG, DXF, PDF | First choice. RoomPlan-based. Its JSON export is a documented extension of Apple's RoomPlan JSON (`docs/handoff-format-v1.md` in the MIT-licensed `laanlabs/openPlan3D` repo): meters, 4x4 transforms, walls with thickness, doors with hinge and swing, windows with sill height, furniture with size and position. New app (few ratings); furniture category names still to confirm from a real export. |
+| **Polycam** | Free plan exports glTF only | glTF (free); more on paid plans | Space Mode detects furniture on every plan. Unknown whether furniture comes out as separate, named pieces. Backup. |
+| 3D Scanner App | Subscription ($2.99-4.99/week or $29.99-69.99/year) | GLB, OBJ, USDZ and more | Reviews say basic features moved behind the subscription. Not worth paying for. |
+| Room(Scan) | Export is Pro-only ($1.99/week, $4.99/month, $49.99 lifetime) | USDZ | Skip. |
 
-Preferred format, best first: GLB (three.js reads it natively, node names survive), OBJ (groups carry names), USDZ (needs a binary USD parser).
+Preferred format, best first: RoomPlan-style JSON (plain data, nothing to parse but JSON), GLB (three.js reads it natively, node names survive), OBJ (groups carry names), USDZ (needs a binary USD parser).
+
+Sample data without scanning: the `laanlabs/openPlan3D` repo also has `test-roomplan.json` (247 KB, MIT), which appears to be raw Apple `CapturedRoom` JSON output.
 
 ### What the sample files must tell us
 
@@ -43,6 +46,19 @@ Preferred format, best first: GLB (three.js reads it natively, node names surviv
 3. Units and axes: meters, Y up?
 4. Is the box an exact bounding box of the measured piece, or a styled model?
 5. Accuracy against a tape measure, and what RoomPlan misses or merges (sectionals, ottomans, side tables).
+
+### Findings from openPlan3D's `test-roomplan.json`
+
+Raw Apple `CapturedRoom` JSON (`version: 2`) of a small apartment: 20 walls, 4 doors, 4 windows, 13 objects, 4 `sections` (bedroom, bedroom, bathroom, unidentified).
+
+- **Units and axes:** meters, Y up. Transforms are column-major 4x4 (translation at indices 12-14). The origin is wherever the phone started, so the floor sits at y = -1.49 here; import must shift it to 0.
+- **Furniture faces local +z, like ours.** In 12 of 13 objects the -z face is within 8 cm of a wall (backs against walls); the desk chair's +z face points at the desk. So `rotationY = atan2(t[8], t[10])` copies straight across.
+- **Object `dimensions` = [width, height, depth].** Objects can float: a counter sink's bottom is 0.77 m up, so `transform.y` matters.
+- **Attributes exist:** `ChairType` (swivel), `ChairArmType`, `ChairBackType`, `ChairLegType` (star), `StorageType` (cabinet / shelf), `TableShapeType` (rectangular), `TableType`, `SofaType` (rectangular). They map onto our style params.
+- **Walls are segments with zero thickness** (`dimensions` = [length, height, 0]); 37 of 40 wall ends meet another wall exactly, so rooms can be rebuilt as closed loops from the wall graph. The single `floors` entry is only a bounding rectangle for multi-room scans.
+- **Doors and windows** point at their wall through `parentIdentifier`; doors carry `isOpen`. Window sills here are 1.21-1.29 m above the floor. Ceiling 2.44 m.
+- **Multi-room scans happen.** The editor works on one room at a time, so import should let you pick a room (by `sections` label) until multi-room editing exists.
+- `coreModel` (an opaque Apple blob) is 86% of the file and can be ignored.
 
 ## 5. Import into the web app
 
@@ -119,8 +135,8 @@ How (no Mac available): an Expo (React Native) app with one small local Swift mo
 
 | Step | What | Needs |
 |---|---|---|
-| **S0. Sample scans** | Scan one furnished room with 3D Scanner App (RoomPlan mode) and Room(Scan); export every format offered; tape-measure 3-4 pieces. Inspect the files to answer section 4's questions. | LiDAR iPhone/iPad |
-| **S1. Import scan** | Adapter for the best format; room, openings and furniture mapped to kinds; original file kept | S0 |
+| **S0. Sample scans** | Scan one furnished room with OpenPlan3D (and Polycam's free plan as a backup); export the JSON and every other format offered; tape-measure 3-4 pieces. Inspect the files to answer section 4's questions. | LiDAR iPhone/iPad |
+| **S1. Import scan** | Adapter for the best format; room, openings and furniture mapped to kinds; original file kept. *Done for RoomPlan JSON (`src/domain/scan/`), except keeping the original file; still to confirm on an OpenPlan3D export.* | S0 |
 | **S2. Photos** | Upload and local storage, photo strip in the editor, linking pieces to photos (manual boxes first) | S1 |
 | **S3. Style pass** | Crops to Claude to style params; review UI; Claude-located boxes | S2 + cloud backend (M3) |
 | **S4. Alignment** | Click alignment, 3D overlay on photos, automatic crops | S2 |

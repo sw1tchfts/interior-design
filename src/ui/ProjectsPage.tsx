@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { FolderOpen, Plus, Trash2, Upload } from 'lucide-react';
+import { FolderOpen, Plus, ScanBox, Trash2, Upload, X } from 'lucide-react';
 import { createProject, defaultSettings } from '../domain/schema/project';
 import { lShapeRoomPoints, rectangleRoomPoints } from '../domain/room/roomOps';
-import { feet } from '../domain/units/units';
+import { objectsInRoom, projectFromScan } from '../domain/scan/importScan';
+import { type ScanData, parseRoomPlan } from '../domain/scan/roomplan';
+import { type ScanRoom, findScanRooms } from '../domain/scan/scanRooms';
+import { feet, formatArea } from '../domain/units/units';
 import { type ProjectMeta, readProjectFile, repository } from '../persistence/repository';
 import { navigate } from '../navigation';
 import { LengthInput } from './LengthInput';
@@ -12,7 +15,9 @@ type Shape = 'rect' | 'l';
 export function ProjectsPage() {
   const [projects, setProjects] = useState<ProjectMeta[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [scanChoice, setScanChoice] = useState<{ name: string; scan: ScanData; rooms: ScanRoom[] } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const scanRef = useRef<HTMLInputElement>(null);
 
   const refresh = () => repository.list().then(setProjects).catch((e) => setError(String(e)));
   useEffect(() => {
@@ -31,6 +36,26 @@ export function ProjectsPage() {
     }
   };
 
+  const createFromScan = async (name: string, scan: ScanData, room: ScanRoom) => {
+    const doc = projectFromScan(name, scan, room);
+    await repository.save(doc);
+    navigate(`/p/${doc.id}`);
+  };
+
+  const importScan = async (file: File) => {
+    setError(null);
+    try {
+      const scan = parseRoomPlan(JSON.parse(await file.text()));
+      const rooms = findScanRooms(scan);
+      const name = file.name.replace(/\.[^.]+$/, '') || 'Scanned room';
+      if (rooms.length === 0) throw new Error("couldn't find a closed room in it. Try scanning the room again, all the way around.");
+      if (rooms.length === 1) await createFromScan(name, scan, rooms[0]!);
+      else setScanChoice({ name, scan, rooms });
+    } catch (e) {
+      setError(`Could not import that scan: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-10">
       <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
@@ -39,6 +64,21 @@ export function ProjectsPage() {
           <p className="text-sm text-muted">Measure, model and rearrange your clients' rooms.</p>
         </div>
         <div className="flex gap-2">
+          <button className="btn" onClick={() => scanRef.current?.click()} title="A RoomPlan scan exported as JSON, e.g. from OpenPlan3D">
+            <ScanBox size={16} /> Import scan
+          </button>
+          <input
+            ref={scanRef}
+            type="file"
+            accept=".json,application/json"
+            hidden
+            data-testid="scan-file-input"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void importScan(f);
+              e.target.value = '';
+            }}
+          />
           <button className="btn" onClick={() => fileRef.current?.click()}>
             <Upload size={16} /> Import project file
           </button>
@@ -57,6 +97,38 @@ export function ProjectsPage() {
       </header>
 
       {error && <div className="mb-4 rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger">{error}</div>}
+
+      {scanChoice && (
+        <section className="mb-6 rounded-lg border border-accent/30 bg-accent-soft/40 p-4" data-testid="scan-rooms">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">This scan has {scanChoice.rooms.length} rooms</h2>
+              <p className="text-sm text-muted">Pick one to start a project. You can import the scan again for the others.</p>
+            </div>
+            <button className="btn btn-ghost" aria-label="Cancel scan import" onClick={() => setScanChoice(null)}>
+              <X size={16} />
+            </button>
+          </div>
+          <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {scanChoice.rooms.map((room) => {
+              const pieces = objectsInRoom(scanChoice.scan, room).length;
+              return (
+                <li key={room.label}>
+                  <button
+                    className="w-full rounded-md border border-line bg-white px-3 py-2 text-left hover:border-accent"
+                    onClick={() => void createFromScan(`${scanChoice.name} – ${room.label}`, scanChoice.scan, room)}
+                  >
+                    <div className="font-medium">{room.label}</div>
+                    <div className="text-xs text-muted">
+                      {formatArea(room.area, defaultSettings())} · {pieces} {pieces === 1 ? 'piece' : 'pieces'} of furniture
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_320px]">
         <section>
