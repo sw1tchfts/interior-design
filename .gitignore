@@ -6,3 +6,6 @@ test-results
 .env
 .env.*
 *.tsbuildinfo
+
+# Sample scans and photos of real rooms (private)
+samples/
