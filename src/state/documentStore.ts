@@ -1,9 +1,10 @@
+import { useEffect, useMemo, useRef } from 'react';
 import { create } from 'zustand';
 import { type Draft, produce } from 'immer';
 import type { Item, Layout, ProjectDoc, Room } from '../domain/schema/project';
 import * as H from './history';
 
-interface DocumentState {
+export interface DocumentState {
   history: H.History<ProjectDoc> | null;
   load(doc: ProjectDoc): void;
   close(): void;
@@ -42,6 +43,46 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
 });
 
 export const docActions = () => useDocumentStore.getState();
+
+/**
+ * Finishes the edit in a focused field (committing it and closing its undo group)
+ * before a press in the plan or 3D view changes the selection or starts a drag.
+ * Browsers only blur on mousedown, after pointerdown handlers have already run,
+ * so without this the field's group and the drag's group would get tangled.
+ */
+export function finishFieldEdit() {
+  const el = document.activeElement;
+  if (el instanceof HTMLElement && el.matches('input, textarea, select')) el.blur();
+}
+
+/**
+ * Focus/blur handlers that make a field's edits (typing, color dragging) one undo
+ * step. If the field unmounts while focused, browsers skip the blur, so the
+ * group is closed on unmount instead of staying open and swallowing later edits.
+ */
+export function useEditTransaction() {
+  const open = useRef(false);
+  useEffect(
+    () => () => {
+      if (open.current) docActions().end();
+    },
+    [],
+  );
+  return useMemo(
+    () => ({
+      onFocus: () => {
+        open.current = true;
+        docActions().begin();
+      },
+      onBlur: () => {
+        if (!open.current) return;
+        open.current = false;
+        docActions().end();
+      },
+    }),
+    [],
+  );
+}
 
 export const useDoc = () => useDocumentStore((s) => s.history?.present ?? null);
 export const useCanUndo = () => useDocumentStore((s) => (s.history?.past.length ?? 0) > 0);

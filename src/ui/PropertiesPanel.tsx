@@ -13,7 +13,9 @@ import {
 } from '../domain/room/roomOps';
 import { findCollisions } from '../domain/snapping/snapping';
 import { formatArea, formatLength } from '../domain/units/units';
-import { addItem, docActions, removeItem, updateItem, updateRoom, useItem, useLayout, useRoom, useSettings } from '../state/documentStore';
+import {
+  addItem, removeItem, updateItem, updateRoom, useEditTransaction, useItem, useLayout, useRoom, useSettings,
+} from '../state/documentStore';
 import { ui, useUiStore } from '../state/uiStore';
 import { addOpeningFromPreset } from './LibraryPanel';
 import { LengthInput } from './LengthInput';
@@ -27,8 +29,6 @@ const SLOT_LABELS: Record<MaterialSlot, string> = {
   bedding: 'Bedding',
 };
 
-/** Groups continuous edits (typing, color dragging) into one undo step. */
-const txHandlers = { onFocus: () => docActions().begin(), onBlur: () => docActions().end() };
 
 export function duplicateItem(item: Item) {
   const copy: Item = {
@@ -56,9 +56,9 @@ export function PropertiesPanel() {
       {item ? (
         <ItemProperties key={item.id} item={item} settings={settings} />
       ) : selection?.type === 'wall' ? (
-        <WallProperties index={selection.index} settings={settings} />
+        <WallProperties key={selection.index} index={selection.index} settings={settings} />
       ) : selection?.type === 'vertex' ? (
-        <VertexProperties index={selection.index} />
+        <VertexProperties key={selection.index} index={selection.index} />
       ) : selection?.type === 'opening' ? (
         <OpeningProperties key={selection.id} id={selection.id} settings={settings} />
       ) : (
@@ -97,6 +97,7 @@ function ChoiceField({ label, children }: { label: string; children: React.React
 }
 
 function ItemProperties({ item, settings }: { item: Item; settings: Settings }) {
+  const tx = useEditTransaction();
   const def = getKind(item.kind);
   const layout = useLayout();
   const colliding = layout ? findCollisions(layout.itemOrder.map((id) => layout.items[id]!)).has(item.id) : false;
@@ -110,7 +111,7 @@ function ItemProperties({ item, settings }: { item: Item; settings: Settings }) 
         <input
           className="input text-base font-semibold"
           aria-label="Item name"
-          {...txHandlers}
+          {...tx}
           value={item.name}
           onChange={(e) => set((it) => { it.name = e.target.value; })}
         />
@@ -167,7 +168,7 @@ function ItemProperties({ item, settings }: { item: Item; settings: Settings }) 
         <textarea
           className="input min-h-16 resize-y"
           placeholder="Vendor, fabric, price…"
-          {...txHandlers}
+          {...tx}
           value={item.notes ?? ''}
           onChange={(e) => set((it) => { it.notes = e.target.value; })}
         />
@@ -260,11 +261,12 @@ function ParamInput({ field, item, settings }: { field: ParamField; item: Item; 
 }
 
 function ColorRow({ label, value, onChange }: { label: string; value: string; onChange(hex: string): void }) {
+  const tx = useEditTransaction();
   return (
     <div className="mb-2">
       <div className="mb-1 flex items-center justify-between text-sm">
         <span className="text-muted">{label}</span>
-        <input type="color" {...txHandlers} aria-label={`${label} color`} className="h-6 w-8 cursor-pointer rounded border border-line" value={value} onChange={(e) => onChange(e.target.value)} />
+        <input type="color" {...tx} aria-label={`${label} color`} className="h-6 w-8 cursor-pointer rounded border border-line" value={value} onChange={(e) => onChange(e.target.value)} />
       </div>
       <div className="flex flex-wrap gap-1">
         {PALETTE.map((c) => (
@@ -462,6 +464,7 @@ function VertexProperties({ index }: { index: number }) {
 
 function RoomProperties({ settings }: { settings: Settings }) {
   const room = useRoom();
+  const tx = useEditTransaction();
   if (!room) return null;
   const pts = roomPoints(room);
   return (
@@ -469,7 +472,7 @@ function RoomProperties({ settings }: { settings: Settings }) {
       <input
         className="input mb-3 text-base font-semibold"
         aria-label="Room name"
-        {...txHandlers}
+        {...tx}
         value={room.name}
         onChange={(e) => updateRoom((r) => ({ ...r, name: e.target.value }))}
       />

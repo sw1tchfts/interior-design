@@ -1,7 +1,7 @@
 import { ArrowLeft, Box, Columns2, Download, Eye, MousePointer2, PenLine, Redo2, Square, Undo2 } from 'lucide-react';
 import { exportProjectFile } from '../persistence/repository';
 import { useSaveStatus } from '../persistence/autosave';
-import { docActions, getDoc, useCanRedo, useCanUndo, useDoc } from '../state/documentStore';
+import { docActions, getDoc, useCanRedo, useCanUndo, useDoc, useEditTransaction } from '../state/documentStore';
 import { ui, useUiStore } from '../state/uiStore';
 import { navigate } from '../navigation';
 
@@ -14,6 +14,7 @@ export function Toolbar() {
   const canUndo = useCanUndo();
   const canRedo = useCanRedo();
   const status = useSaveStatus((s) => s.status);
+  const tx = useEditTransaction();
   if (!doc) return null;
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line bg-white px-2">
@@ -24,8 +25,7 @@ export function Toolbar() {
         className="w-56 rounded-md border border-transparent bg-transparent px-2 py-1 text-sm font-semibold outline-none hover:border-line focus:border-accent"
         aria-label="Project name"
         value={doc.name}
-        onFocus={() => docActions().begin()}
-        onBlur={() => docActions().end()}
+        {...tx}
         onChange={(e) => docActions().update((d) => { d.name = e.target.value; })}
       />
       <span className={`text-xs ${status === 'error' ? 'text-danger' : 'text-muted'}`} data-testid="save-status">

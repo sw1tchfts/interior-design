@@ -15,7 +15,7 @@ interface DebugOpening {
 
 interface DebugDoc {
   roomOrder: string[];
-  rooms: Record<string, { vertices: { p: [number, number] }[]; openings: DebugOpening[] }>;
+  rooms: Record<string, { vertices: { p: [number, number] }[]; openings: DebugOpening[]; ceilingHeight: number }>;
   layoutOrder: string[];
   layouts: Record<string, { itemOrder: string[]; items: Record<string, { transform: { x: number; z: number; rotationY: number } }> }>;
 }
@@ -143,6 +143,101 @@ test('add doors and windows, slide and edit them, and persist', async ({ page })
   const reloaded = await openings(page);
   expect(reloaded.map((o) => o.type)).toEqual(['door', 'window']);
   expect(reloaded[0]!.swing).toBe('out');
+
+  expect(errors).toEqual([]);
+});
+
+test('saves while a field still has focus, and length fields keep exact values', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Create project' }).click();
+  await expect(page.getByTestId('plan-svg')).toBeVisible();
+
+  // Typing without leaving the field still reaches disk.
+  const name = page.getByLabel('Project name');
+  await name.fill('Typed without leaving the field');
+  const status = page.getByTestId('save-status');
+  await expect(status).toHaveText('Unsaved changes');
+  await expect(status).toHaveText('Saved', { timeout: 5000 });
+  await page.reload();
+  await expect(page.getByLabel('Project name')).toHaveValue('Typed without leaving the field');
+
+  const ceilingHeight = async () => {
+    const doc = await getDoc(page);
+    return doc.rooms[doc.roomOrder[0]!]!.ceilingHeight;
+  };
+  const exact = (96 + 13 / 16) * INCH;
+  const ceiling = page.getByLabel('Ceiling height');
+  // Two-digit numerators parse as fractions, not as a whole number plus a fraction.
+  await ceiling.fill(`8' 13/16"`);
+  await ceiling.press('Enter');
+  expect(await ceilingHeight()).toBeCloseTo(exact, 9);
+  // Clicking in and out changes nothing, even though the display rounds to 1/4".
+  await ceiling.click();
+  await ceiling.blur();
+  expect(await ceilingHeight()).toBeCloseTo(exact, 9);
+  // Escape discards what was typed.
+  await ceiling.fill(`9'`);
+  await ceiling.press('Escape');
+  expect(await ceilingHeight()).toBeCloseTo(exact, 9);
+  // Enter committed exactly once: one undo restores the original height.
+  await page.getByRole('button', { name: 'Undo' }).click();
+  expect(await ceilingHeight()).toBeCloseTo(96 * INCH, 9);
+
+  expect(errors).toEqual([]);
+});
+
+test('pressing the plan finishes a field edit before selecting or dragging', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Create project' }).click();
+  await expect(page.getByTestId('plan-svg')).toBeVisible();
+  await page.getByTestId('add-sofa-84').click();
+  await page.getByTestId('add-sofa-84').click();
+  const items = async () => {
+    const doc = await getDoc(page);
+    const layout = doc.layouts[doc.layoutOrder[0]!]!;
+    return layout.itemOrder.map((id) => ({ id, ...layout.items[id]!.transform, width: (layout.items[id] as unknown as { dims: { width: number } }).dims.width }));
+  };
+  const [a, b] = await items();
+
+  // Dragging one sofa while the other's name field has focus is still one undo step.
+  await page.locator(`[data-item-id="${a!.id}"]`).click();
+  await page.getByLabel('Item name').click();
+  const box = (await page.locator(`[data-item-id="${b!.id}"]`).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  for (let i = 1; i <= 10; i++) await page.mouse.move(box.x + box.width / 2 + i * 5, box.y + box.height / 2);
+  await page.mouse.up();
+  expect((await items())[1]!.x).toBeGreaterThan(b!.x);
+  await page.getByRole('button', { name: 'Undo' }).click();
+  expect((await items())[1]!.x).toBeCloseTo(b!.x, 9);
+
+  // A typed width is kept when the next press lands on the plan instead of Enter.
+  await page.locator(`[data-item-id="${b!.id}"]`).click();
+  await page.getByLabel('Width', { exact: true }).fill('70');
+  const svg = (await page.getByTestId('plan-svg').boundingBox())!;
+  await page.mouse.click(svg.x + 15, svg.y + 15);
+  expect((await items())[1]!.width).toBeCloseTo(70 * INCH, 9);
+
+  // Focusing wall A's length and then clicking wall B leaves both walls alone.
+  const wallLengths = async () => {
+    const pts = await roomPoints(page);
+    return pts.map((p, i) => Math.hypot(pts[(i + 1) % pts.length]![0] - p[0], pts[(i + 1) % pts.length]![1] - p[1]));
+  };
+  // Wall hit lines are transparent and zero-height, so click their middle with the mouse.
+  const clickWall = async (index: number) => {
+    const line = (await page.locator(`[data-wall-index="${index}"]`).boundingBox())!;
+    await page.mouse.click(line.x + line.width / 2, line.y + line.height / 2);
+  };
+  const before = await wallLengths();
+  await clickWall(0);
+  await page.getByLabel('Wall length').click();
+  await clickWall(1);
+  await expect(page.getByRole('heading', { name: 'Wall B' })).toBeVisible();
+  expect(await wallLengths()).toEqual(before.map((l) => expect.closeTo(l, 9)));
 
   expect(errors).toEqual([]);
 });

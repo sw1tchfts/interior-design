@@ -20,6 +20,12 @@ describe('parseLength', () => {
     [`1.5'`, 18 * INCH],
     [`150.5"`, 150.5 * INCH],
     [`3/4"`, 0.75 * INCH],
+    [`13/16"`, (13 / 16) * INCH],
+    [`15/16`, (15 / 16) * INCH],
+    [`1 / 2"`, 0.5 * INCH],
+    [`2' 13/16"`, 2 * FOOT + (13 / 16) * INCH],
+    [`6 13/16"`, (6 + 13 / 16) * INCH],
+    [`6-11/16"`, (6 + 11 / 16) * INCH],
     [`84`, 84 * INCH],
     [`6 1/2`, 6.5 * INCH],
     [`320cm`, 3.2],
@@ -40,7 +46,7 @@ describe('parseLength', () => {
     expect(parseLength('2.5', 'm')).toBeCloseTo(2.5, 9);
   });
 
-  for (const bad of ['', 'abc', `12'6'`, '1/0"', '5 kg', `"`, `'`]) {
+  for (const bad of ['', 'abc', `12'6'`, '1/0"', '5 kg', `"`, `'`, '6 1/', '1/2/3', '6.5.5']) {
     it(`rejects ${JSON.stringify(bad)}`, () => {
       expect(parseLength(bad, 'in')).toBeNull();
     });
@@ -60,6 +66,17 @@ describe('formatLength', () => {
   it('formats metric', () => {
     expect(formatLength(3.2, metric)).toBe('320 cm');
     expect(formatLength(3.2054, { unitSystem: 'metric', precision: 'mm' })).toBe('320.5 cm');
+  });
+
+  it('reads back every sixteenth of an inch exactly as displayed', () => {
+    // Exhaustive over three feet, so two-digit numerators (11/16, 13/16, 15/16) are always covered.
+    for (const ft of [0, 1, 12]) {
+      for (let sixteenths = 0; sixteenths < 36 * 16; sixteenths++) {
+        const m = ft * FOOT + (sixteenths / 16) * INCH;
+        const text = formatLength(m, sixteenth);
+        expect(parseLength(text, 'in'), text).toBeCloseTo(m, 9);
+      }
+    }
   });
 
   it('round-trips through parse at the display precision', () => {

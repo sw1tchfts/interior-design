@@ -8,7 +8,9 @@ import type { Vec2 } from '../domain/geometry/vec2';
 import type { Item, Room } from '../domain/schema/project';
 import { roomPoints } from '../domain/room/roomOps';
 import { dragItemTo, findCollisions } from '../domain/snapping/snapping';
-import { activeLayout, activeRoom, docActions, getDoc, updateItem, useLayout, useRoom, useSettings } from '../state/documentStore';
+import {
+  activeLayout, activeRoom, docActions, finishFieldEdit, getDoc, updateItem, useLayout, useRoom, useSettings,
+} from '../state/documentStore';
 import { type CameraPreset, ui, useUiStore } from '../state/uiStore';
 import { FurnitureModel } from './FurnitureModel';
 import { RoomShell } from './RoomShell';
@@ -167,7 +169,7 @@ export function Scene3D() {
   if (!room || !settings) return null;
   const { center } = roomFrame(room);
   return (
-    <div className="relative h-full w-full bg-[#e9e6e0]" data-testid="scene-3d">
+    <div className="relative h-full w-full bg-[#e9e6e0]" data-testid="scene-3d" onPointerDownCapture={finishFieldEdit}>
       <Canvas
         shadows="percentage"
         frameloop="demand"

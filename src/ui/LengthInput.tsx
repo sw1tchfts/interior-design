@@ -18,6 +18,8 @@ export function LengthInput({ value, onCommit, settings, min = 0, max = Infinity
   const [draft, setDraft] = useState<string | null>(autoFocus ? formatLength(value, settings) : null);
   const [error, setError] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
+  // Enter and Escape finish the edit themselves; the blur they trigger must not commit again.
+  const finished = useRef(false);
   // Focus without scrolling: the plan's overflow-hidden container would otherwise shift.
   useEffect(() => {
     if (autoFocus) ref.current?.focus({ preventScroll: true });
@@ -26,6 +28,13 @@ export function LengthInput({ value, onCommit, settings, min = 0, max = Infinity
 
   const commit = () => {
     if (draft === null) return;
+    // Untouched text means no edit: re-reading the rounded display would quietly
+    // change a precise (e.g. scanned) value to the display precision.
+    if (draft === formatLength(value, settings)) {
+      setDraft(null);
+      onCancel?.();
+      return;
+    }
     const parsed = parseLength(draft, defaultUnitFor(settings));
     if (parsed === null || parsed < min || parsed > max) {
       setError(true);
@@ -46,18 +55,24 @@ export function LengthInput({ value, onCommit, settings, min = 0, max = Infinity
       className={`input font-mono tabular-nums ${error ? 'border-danger! ring-2 ring-danger/20' : ''} ${className ?? ''}`}
       value={shown}
       onFocus={(e) => {
+        finished.current = false;
         setDraft(formatLength(value, settings));
         requestAnimationFrame(() => e.target.select());
       }}
       onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
+      onBlur={() => {
+        if (finished.current) finished.current = false;
+        else commit();
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           commit();
+          finished.current = true;
           (e.target as HTMLInputElement).blur();
         } else if (e.key === 'Escape') {
           setDraft(null);
           onCancel?.();
+          finished.current = true;
           (e.target as HTMLInputElement).blur();
         }
         e.stopPropagation();

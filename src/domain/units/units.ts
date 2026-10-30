@@ -18,19 +18,20 @@ export const feet = (ft: number, inch = 0) => ft * FOOT + inch * INCH;
 
 const NUM = String.raw`\d+(?:\.\d+)?|\.\d+`;
 
+const FRACTION = String.raw`(\d+)\s*/\s*(\d+)`;
+
 // "6", "6.5", "6 1/2", "6-1/2", "1/2"; returns a number of the implied unit.
+// A whole number and a fraction need a space or hyphen between them, so
+// "13/16" is thirteen sixteenths, never 1 + 3/16.
 function parseMixedNumber(text: string): number | null {
-  const s = text.trim();
-  if (s === '') return null;
-  const m = new RegExp(String.raw`^(${NUM})?(?:(?:\s+|-)?(\d+)\s*/\s*(\d+))?$`).exec(s);
-  if (!m || (m[1] === undefined && m[2] === undefined)) return null;
-  let value = m[1] !== undefined ? parseFloat(m[1]) : 0;
-  if (m[2] !== undefined && m[3] !== undefined) {
-    const den = parseInt(m[3], 10);
-    if (den === 0) return null;
-    value += parseInt(m[2], 10) / den;
-  }
-  return value;
+  const m = new RegExp(String.raw`^(?:(${NUM})(?:(?:\s+|-)${FRACTION})?|${FRACTION})$`).exec(text.trim());
+  if (!m) return null;
+  const whole = m[1] !== undefined ? parseFloat(m[1]) : 0;
+  const num = m[2] ?? m[4];
+  const den = m[3] ?? m[5];
+  if (num === undefined || den === undefined) return whole;
+  const d = parseInt(den, 10);
+  return d === 0 ? null : whole + parseInt(num, 10) / d;
 }
 
 /**

@@ -12,7 +12,9 @@ import {
 } from '../domain/room/roomOps';
 import { dragItemTo, findCollisions, snapAngle, snapToGrid } from '../domain/snapping/snapping';
 import { defaultUnitFor, formatLength, parseLength } from '../domain/units/units';
-import { docActions, getDoc, activeLayout, activeRoom, updateItem, updateRoom, useLayout, useRoom, useSettings } from '../state/documentStore';
+import {
+  docActions, finishFieldEdit, getDoc, activeLayout, activeRoom, updateItem, updateRoom, useLayout, useRoom, useSettings,
+} from '../state/documentStore';
 import { ui, useUiStore } from '../state/uiStore';
 import { GridLayer } from './GridLayer';
 import { ItemSymbol } from './ItemSymbol';
@@ -268,7 +270,8 @@ export function PlanCanvas() {
     if (tool !== 'select' || e.button !== 0) return;
     e.stopPropagation();
     ui().select({ type: 'wall', index });
-    drag.current = { type: 'wall', index, startWorld: toWorld(e.clientX, e.clientY), startRoom: room };
+    // Read the store, not this render's `room`: finishing a field edit on this press may have just changed it.
+    drag.current = { type: 'wall', index, startWorld: toWorld(e.clientX, e.clientY), startRoom: activeRoom(getDoc()!) };
     docActions().begin();
     capture(e);
   };
@@ -284,6 +287,7 @@ export function PlanCanvas() {
         className="block touch-none"
         data-testid="plan-svg"
         style={{ cursor: tool === 'draw' ? 'crosshair' : drag.current?.type === 'pan' ? 'grabbing' : 'default' }}
+        onPointerDownCapture={finishFieldEdit}
         onPointerDown={onBackgroundDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
